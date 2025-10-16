@@ -8,172 +8,561 @@ from datetime import datetime
 from imdb import IMDb
 import logging
 import streamlit as st
+import re
+from urllib.parse import quote
 
 # ===============================================
 # CONFIGURATION
 # ===============================================
 TMDB_API_KEY = '6fad3f86b8452ee232deb7977d7dcf58'
 TMDB_BASE_URL = 'https://api.themoviedb.org/3'
-HEADERS = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
+HEADERS = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"}
 WIKI_BASE = "https://en.wikipedia.org/wiki/List_of_{}_films_of_{}"
 
 logging.getLogger("imdbpy").setLevel(logging.ERROR)
 ia = IMDb()
 
 # ===============================================
-# TMDb & IMDb Functions
+# Enhanced TMDb & IMDb Functions
 # ===============================================
-def get_tmdb_id(title, year):
+def clean_movie_title(title):
+    """Clean movie title by removing brackets and extra content"""
+    if not title or pd.isna(title):
+        return ""
+    title = str(title)
+    # Remove content in brackets
+    title = re.sub(r'\[.*?\]', '', title)
+    title = re.sub(r'\(.*?\)', '', title)
+    # Remove extra spaces and strip
+    title = re.sub(r'\s+', ' ', title).strip()
+    return title
+
+def get_tmdb_id_advanced(title, year):
+    """Enhanced TMDb search with better matching"""
     try:
+        clean_title = clean_movie_title(title)
         url = f"{TMDB_BASE_URL}/search/movie"
-        params = {"api_key": TMDB_API_KEY, "query": title, "year": year}
-        res = requests.get(url, params=params, timeout=10)
+        params = {"api_key": TMDB_API_KEY, "query": clean_title, "year": year, "include_adult": "false"}
+        res = requests.get(url, params=params, timeout=15)
         res.raise_for_status()
         data = res.json()
+        
         if data.get("results"):
-            movie = data["results"][0]
-            tmdb_id = movie["id"]
-            details_url = f"{TMDB_BASE_URL}/movie/{tmdb_id}"
-            det_res = requests.get(details_url, params={"api_key": TMDB_API_KEY}, timeout=10)
-            if det_res.status_code == 200:
-                imdb_id = det_res.json().get("imdb_id", "N/A")
-            else:
-                imdb_id = "N/A"
-            return tmdb_id, imdb_id
-        return "N/A", "N/A"
-    except Exception:
-        return "N/A", "N/A"
+            # Try exact match first
+            for movie in data["results"]:
+                if (movie.get("title", "").lower() == clean_title.lower() or 
+                    movie.get("original_title", "").lower() == clean_title.lower()):
+                    return process_tmdb_movie(movie["id"])
+            
+            # Fallback to first result
+            return process_tmdb_movie(data["results"][0]["id"])
+        
+        return "N/A", "N/A", "N/A", "N/A"
+    except Exception as e:
+        return "N/A", "N/A", "N/A", "N/A"
 
-def get_imdb_id(title, year):
+def process_tmdb_movie(tmdb_id):
+    """Get detailed movie info from TMDb"""
     try:
-        results = ia.search_movie(title)
-        for result in results:
-            if result.get('year') and abs(result['year'] - int(year)) <= 1:
-                ia.update(result)
-                return f"tt{result.movieID}"
+        details_url = f"{TMDB_BASE_URL}/movie/{tmdb_id}"
+        params = {"api_key": TMDB_API_KEY, "append_to_response": "credits"}
+        det_res = requests.get(details_url, params=params, timeout=15)
+        
+        if det_res.status_code == 200:
+            movie_data = det_res.json()
+            imdb_id = movie_data.get("imdb_id", "N/A")
+            
+            # Get director from credits
+            director = "N/A"
+            if "credits" in movie_data and "crew" in movie_data["credits"]:
+                for person in movie_data["credits"]["crew"]:
+                    if person.get("job") == "Director":
+                        director = person.get("name", "N/A")
+                        break
+            
+            # Get poster path
+            poster_path = movie_data.get("poster_path", "")
+            poster_url = f"https://image.tmdb.org/t/p/w200{poster_path}" if poster_path else "N/A"
+            
+            return tmdb_id, imdb_id, director, poster_url
+        
+        return tmdb_id, "N/A", "N/A", "N/A"
+    except Exception:
+        return tmdb_id, "N/A", "N/A", "N/A"
+
+def get_imdb_rating(imdb_id):
+    """Get IMDb rating for a movie"""
+    try:
+        if imdb_id and imdb_id != "N/A":
+            movie = ia.get_movie(imdb_id.replace("tt", ""))
+            if movie and 'rating' in movie:
+                return f"{movie['rating']}/10"
         return "N/A"
     except Exception:
-        _, imdb_id = get_tmdb_id(title, year)
-        return imdb_id
+        return "N/A"
 
 # ===============================================
-# Wikipedia Scraper
+# Enhanced Wikipedia Scraper
 # ===============================================
 def extract_movies_generic(url, category, year, progress_callback=None):
+    """Enhanced movie extraction with better table parsing"""
     try:
-        res = requests.get(url, headers=HEADERS)
+        res = requests.get(url, headers=HEADERS, timeout=15)
         if res.status_code != 200:
-            st.warning(f"Wikipedia page not found for {category} {year} (HTTP {res.status_code})")
+            st.warning(f"❌ Wikipedia page not found for {category} {year} (HTTP {res.status_code})")
             return pd.DataFrame()
         
         soup = BeautifulSoup(res.text, "html.parser")
+        
+        # Remove unwanted elements
+        for element in soup.find_all(["sup", "span"]):
+            element.decompose()
+        
         tables = soup.find_all("table", {"class": "wikitable"})
         if not tables:
-            st.warning(f"No movie tables found for {category} {year}")
+            st.warning(f"⚠️ No movie tables found for {category} {year}")
             return pd.DataFrame()
 
         all_movies = []
-        for table in tables:
-            df = pd.read_html(StringIO(str(table)))[0]
-            df.columns = [str(c).strip() for c in df.columns]
+        total_rows = sum(len(pd.read_html(StringIO(str(table)))[0]) for table in tables)
+        processed_rows = 0
 
-            name_col = next((c for c in df.columns if "title" in c.lower() or "film" in c.lower()), df.columns[0])
-            director_col = next((c for c in df.columns if "director" in c.lower()), None)
+        for table_idx, table in enumerate(tables):
+            try:
+                df = pd.read_html(StringIO(str(table)))[0]
+                df.columns = [str(c).split('\n')[0].strip() for c in df.columns]
 
-            for i, (_, row) in enumerate(df.iterrows(), start=1):
-                movie = str(row.get(name_col, "")).strip()
-                if not movie or movie.lower() in ["title", "film"]:
-                    continue
-                director = str(row.get(director_col, "")).strip() if director_col else "N/A"
+                # Enhanced column detection
+                name_col = next((c for c in df.columns if any(word in c.lower() for word in 
+                            ["title", "film", "movie", "name"])), df.columns[0])
+                director_col = next((c for c in df.columns if "director" in c.lower()), None)
 
-                tmdb_id, tmdb_imdb = get_tmdb_id(movie, year)
-                imdb_id = get_imdb_id(movie, year) if tmdb_imdb == "N/A" else tmdb_imdb
+                for row_idx, (_, row) in enumerate(df.iterrows(), start=1):
+                    movie = clean_movie_title(row.get(name_col, ""))
+                    if not movie or movie.lower() in ["title", "film", "movie", "name", "nan"]:
+                        processed_rows += 1
+                        continue
 
-                tmdb_url = f"https://www.themoviedb.org/movie/{tmdb_id}" if tmdb_id != "N/A" else "N/A"
-                imdb_url = f"https://www.imdb.com/title/{imdb_id}" if imdb_id != "N/A" else "N/A"
+                    # Get director from Wikipedia first
+                    wiki_director = "N/A"
+                    if director_col and director_col in row:
+                        wiki_director = str(row[director_col]).split('[')[0].strip()
+                        if wiki_director.lower() in ["", "nan", "tbd"]:
+                            wiki_director = "N/A"
 
-                reason = []
-                if tmdb_id == "N/A":
-                    reason.append("TMDb ID not found")
-                if imdb_id == "N/A":
-                    reason.append("IMDb ID not found")
+                    # Get TMDb data
+                    tmdb_id, imdb_id, tmdb_director, poster_url = get_tmdb_id_advanced(movie, year)
+                    
+                    # Use TMDb director if available, otherwise Wikipedia director
+                    final_director = tmdb_director if tmdb_director != "N/A" else wiki_director
+                    
+                    # Get IMDb rating
+                    imdb_rating = get_imdb_rating(imdb_id) if imdb_id != "N/A" else "N/A"
 
-                all_movies.append({
-                    "Movie": movie,
-                    "Director": director,
-                    "Release Year": year,
-                    "TMDb": tmdb_url,
-                    "IMDb": imdb_url,
-                    "Issue": ", ".join(reason) if reason else "None"
-                })
+                    # Create URLs
+                    tmdb_url = f"https://www.themoviedb.org/movie/{tmdb_id}" if tmdb_id != "N/A" else "N/A"
+                    imdb_url = f"https://www.imdb.com/title/{imdb_id}" if imdb_id != "N/A" else "N/A"
 
-                time.sleep(0.1)
-                if progress_callback:
-                    progress_callback(i/len(df))
+                    # Determine issues
+                    reason = []
+                    if tmdb_id == "N/A":
+                        reason.append("TMDb ID not found")
+                    if imdb_id == "N/A":
+                        reason.append("IMDb ID not found")
+                    if final_director == "N/A":
+                        reason.append("Director not found")
 
-        st.success(f"Extracted {len(all_movies)} movies for {category} {year}")
+                    all_movies.append({
+                        "Movie": movie,
+                        "Director": final_director,
+                        "Release Year": year,
+                        "TMDb ID": tmdb_id,
+                        "IMDb ID": imdb_id,
+                        "IMDb Rating": imdb_rating,
+                        "Poster URL": poster_url,
+                        "TMDb Link": tmdb_url,
+                        "IMDb Link": imdb_url,
+                        "Issue": " | ".join(reason) if reason else "None"
+                    })
+
+                    processed_rows += 1
+                    if progress_callback:
+                        progress_callback(processed_rows / total_rows)
+
+                    time.sleep(0.2)  # Rate limiting
+
+            except Exception as e:
+                st.warning(f"⚠️ Error processing table {table_idx + 1}: {e}")
+                continue
+
+        st.success(f"✅ Extracted {len(all_movies)} movies for {category} {year}")
         return pd.DataFrame(all_movies)
+        
     except Exception as e:
-        st.error(f"Error extracting {category} movies for {year}: {e}")
+        st.error(f"❌ Error extracting {category} movies for {year}: {e}")
         return pd.DataFrame()
+
+# ===============================================
+# Enhanced HTML Generator
+# ===============================================
+def generate_beautiful_html(df, category, start_year, end_year, total_movies):
+    """Generate a beautiful HTML report with advanced styling"""
+    
+    html_template = f"""
+    <!DOCTYPE html>
+    <html lang="en">
+    <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>{category} Movies {start_year}-{end_year}</title>
+        <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+        <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
+        <style>
+            body {{
+                background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+                font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+                min-height: 100vh;
+            }}
+            .header {{
+                background: rgba(255, 255, 255, 0.95);
+                backdrop-filter: blur(10px);
+                border-radius: 15px;
+                box-shadow: 0 8px 32px rgba(0, 0, 0, 0.1);
+                margin-bottom: 2rem;
+            }}
+            .movie-card {{
+                background: rgba(255, 255, 255, 0.95);
+                border-radius: 12px;
+                box-shadow: 0 4px 20px rgba(0, 0, 0, 0.1);
+                transition: transform 0.3s ease, box-shadow 0.3s ease;
+                margin-bottom: 1.5rem;
+                overflow: hidden;
+            }}
+            .movie-card:hover {{
+                transform: translateY(-5px);
+                box-shadow: 0 8px 30px rgba(0, 0, 0, 0.15);
+            }}
+            .movie-poster {{
+                height: 200px;
+                background: linear-gradient(45deg, #f0f0f0, #e0e0e0);
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                color: #666;
+                font-size: 14px;
+            }}
+            .movie-poster img {{
+                width: 100%;
+                height: 100%;
+                object-fit: cover;
+            }}
+            .movie-info {{
+                padding: 1.5rem;
+            }}
+            .movie-title {{
+                font-weight: 700;
+                color: #2c3e50;
+                margin-bottom: 0.5rem;
+                font-size: 1.1rem;
+                line-height: 1.3;
+            }}
+            .movie-meta {{
+                color: #7f8c8d;
+                font-size: 0.9rem;
+                margin-bottom: 0.5rem;
+            }}
+            .badge-custom {{
+                background: linear-gradient(45deg, #667eea, #764ba2);
+                color: white;
+                border-radius: 20px;
+                padding: 0.4rem 0.8rem;
+                font-size: 0.8rem;
+            }}
+            .stats-card {{
+                background: rgba(255, 255, 255, 0.95);
+                border-radius: 12px;
+                padding: 1.5rem;
+                margin-bottom: 2rem;
+                box-shadow: 0 4px 20px rgba(0, 0, 0, 0.1);
+            }}
+            .btn-custom {{
+                background: linear-gradient(45deg, #667eea, #764ba2);
+                border: none;
+                border-radius: 25px;
+                padding: 0.5rem 1.5rem;
+                color: white;
+                text-decoration: none;
+                display: inline-block;
+                transition: transform 0.3s ease;
+            }}
+            .btn-custom:hover {{
+                transform: translateY(-2px);
+                color: white;
+            }}
+            .issue-badge {{
+                background: #e74c3c;
+                color: white;
+                padding: 0.3rem 0.6rem;
+                border-radius: 15px;
+                font-size: 0.8rem;
+            }}
+            .rating {{
+                color: #f39c12;
+                font-weight: bold;
+            }}
+        </style>
+    </head>
+    <body>
+        <div class="container py-5">
+            <!-- Header -->
+            <div class="header text-center p-5 mb-4">
+                <h1 class="display-4 fw-bold text-gradient mb-3">
+                    <i class="fas fa-film me-3"></i>{category} Movies Collection
+                </h1>
+                <p class="lead mb-2">{start_year} - {end_year} • {total_movies} Movies</p>
+                <p class="text-muted">Generated on {datetime.now().strftime('%B %d, %Y at %I:%M %p')}</p>
+            </div>
+
+            <!-- Statistics -->
+            <div class="stats-card">
+                <div class="row text-center">
+                    <div class="col-md-3">
+                        <h3 class="fw-bold text-primary">{total_movies}</h3>
+                        <p class="text-muted">Total Movies</p>
+                    </div>
+                    <div class="col-md-3">
+                        <h3 class="fw-bold text-success">{len(df[df['TMDb ID'] != 'N/A'])}</h3>
+                        <p class="text-muted">TMDb Found</p>
+                    </div>
+                    <div class="col-md-3">
+                        <h3 class="fw-bold text-info">{len(df[df['IMDb ID'] != 'N/A'])}</h3>
+                        <p class="text-muted">IMDb Found</p>
+                    </div>
+                    <div class="col-md-3">
+                        <h3 class="fw-bold text-warning">{len(df[df['Issue'] == 'None'])}</h3>
+                        <p class="text-muted">Complete Records</p>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Movies Grid -->
+            <div class="row" id="moviesGrid">
+    """
+
+    # Add movie cards
+    for idx, movie in df.iterrows():
+        poster_html = f'<img src="{movie["Poster URL"]}" alt="{movie["Movie"]}" loading="lazy">' if movie["Poster URL"] != "N/A" else '<div class="d-flex align-items-center justify-content-center h-100"><i class="fas fa-film fa-3x text-muted"></i></div>'
+        
+        tmdb_button = f'<a href="{movie["TMDb Link"]}" class="btn btn-sm btn-outline-primary me-2" target="_blank"><i class="fas fa-database"></i> TMDb</a>' if movie["TMDb Link"] != "N/A" else '<button class="btn btn-sm btn-outline-secondary me-2" disabled><i class="fas fa-database"></i> TMDb</button>'
+        
+        imdb_button = f'<a href="{movie["IMDb Link"]}" class="btn btn-sm btn-warning me-2" target="_blank"><i class="fab fa-imdb"></i> IMDb</a>' if movie["IMDb Link"] != "N/A" else '<button class="btn btn-sm btn-outline-secondary me-2" disabled><i class="fab fa-imdb"></i> IMDb</button>'
+        
+        rating_html = f'<span class="rating"><i class="fas fa-star"></i> {movie["IMDb Rating"]}</span>' if movie["IMDb Rating"] != "N/A" else '<span class="text-muted">No Rating</span>'
+        
+        issue_badge = f'<span class="issue-badge">{movie["Issue"]}</span>' if movie["Issue"] != "None" else '<span class="badge bg-success">Complete</span>'
+
+        html_template += f"""
+                <div class="col-lg-4 col-md-6">
+                    <div class="movie-card">
+                        <div class="movie-poster">
+                            {poster_html}
+                        </div>
+                        <div class="movie-info">
+                            <div class="movie-title">{movie["Movie"]}</div>
+                            <div class="movie-meta">
+                                <i class="fas fa-calendar-alt me-1"></i>{movie["Release Year"]} 
+                                <span class="mx-2">•</span>
+                                {rating_html}
+                            </div>
+                            <div class="movie-meta">
+                                <i class="fas fa-user-tie me-1"></i>{movie["Director"]}
+                            </div>
+                            <div class="d-flex justify-content-between align-items-center mt-3">
+                                <div class="btn-group">
+                                    {tmdb_button}
+                                    {imdb_button}
+                                </div>
+                                {issue_badge}
+                            </div>
+                        </div>
+                    </div>
+                </div>
+        """
+
+    html_template += """
+            </div>
+            
+            <!-- Footer -->
+            <div class="text-center mt-5 text-white">
+                <p>Generated with ❤️ using Movie Data Extractor</p>
+            </div>
+        </div>
+
+        <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+    </body>
+    </html>
+    """
+    
+    return html_template
 
 # ===============================================
 # Streamlit App
 # ===============================================
-st.title("🎬 Movie Data Extractor from Wikipedia")
+def main():
+    st.set_page_config(
+        page_title="🎬 Advanced Movie Data Extractor",
+        page_icon="🎭",
+        layout="wide",
+        initial_sidebar_state="expanded"
+    )
+    
+    # Custom CSS
+    st.markdown("""
+    <style>
+    .main-header {
+        font-size: 3rem;
+        background: linear-gradient(45deg, #667eea, #764ba2);
+        -webkit-background-clip: text;
+        -webkit-text-fill-color: transparent;
+        text-align: center;
+        margin-bottom: 2rem;
+    }
+    .stProgress > div > div > div > div {
+        background: linear-gradient(45deg, #667eea, #764ba2);
+    }
+    </style>
+    """, unsafe_allow_html=True)
+    
+    st.markdown('<h1 class="main-header">🎬 Advanced Movie Data Extractor</h1>', unsafe_allow_html=True)
+    
+    # Sidebar
+    with st.sidebar:
+        st.header("⚙️ Configuration")
+        st.markdown("---")
+        
+        category_input = st.text_input(
+            "**Movie Category**", 
+            value="Hindi",
+            help="Enter movie category (e.g., Hindi, Tamil, Bengali, Hollywood, Bollywood)"
+        )
+        category = category_input.replace(" ", "_")
+        if category:
+            category = category[0].upper() + category[1:]
+        
+        col1, col2 = st.columns(2)
+        with col1:
+            start_year = st.number_input(
+                "**Start Year**", 
+                min_value=1900, 
+                max_value=datetime.now().year, 
+                value=2020
+            )
+        with col2:
+            end_year = st.number_input(
+                "**End Year**", 
+                min_value=1900, 
+                max_value=datetime.now().year, 
+                value=2023
+            )
+        
+        st.markdown("---")
+        st.info("""
+        **Instructions:**
+        1. Enter movie category
+        2. Select year range
+        3. Click 'Fetch Movies'
+        4. Download results
+        """)
+    
+    # Main content
+    col1, col2, col3 = st.columns([1,2,1])
+    with col2:
+        if st.button("🚀 Fetch Movies", use_container_width=True):
+            if start_year > end_year:
+                st.error("❌ Start year cannot be greater than end year!")
+                return
+                
+            all_data = []
+            overall_progress = st.progress(0)
+            total_years = end_year - start_year + 1
+            
+            # Progress and status containers
+            status_text = st.empty()
+            year_progress_container = st.container()
+            
+            for idx, year in enumerate(range(start_year, end_year + 1), start=1):
+                with year_progress_container:
+                    st.info(f"📅 Fetching {category} movies for {year}...")
+                    year_progress_bar = st.progress(0)
+                
+                def progress_callback(progress):
+                    year_progress_bar.progress(min(progress, 1.0))
+                
+                url = WIKI_BASE.format(category, year)
+                df = extract_movies_generic(url, category, year, progress_callback)
+                if not df.empty:
+                    all_data.append(df)
+                
+                overall_progress.progress(int(idx/total_years*100))
+                year_progress_bar.empty()
+            
+            if not all_data:
+                st.warning("⚠️ No data found for the given category/years.")
+            else:
+                final_df = pd.concat(all_data, ignore_index=True)
+                total_movies = len(final_df)
+                final_df.insert(0, "S.No", range(1, total_movies + 1))
+                
+                # Display results
+                st.success(f"✅ Extraction completed! Total movies: {total_movies}")
+                
+                # Show statistics
+                col1, col2, col3, col4 = st.columns(4)
+                with col1:
+                    st.metric("Total Movies", total_movies)
+                with col2:
+                    st.metric("TMDb Found", len(final_df[final_df['TMDb ID'] != 'N/A']))
+                with col3:
+                    st.metric("IMDb Found", len(final_df[final_df['IMDb ID'] != 'N/A']))
+                with col4:
+                    st.metric("Complete Records", len(final_df[final_df['Issue'] == 'None']))
+                
+                # Show dataframe with expander
+                with st.expander("📊 View Data Table", expanded=True):
+                    st.dataframe(final_df, use_container_width=True)
+                
+                # Date-time formatting for filename
+                now = datetime.now()
+                hour = now.strftime("%I").lstrip("0")
+                minute = now.strftime("%M")
+                am_pm = now.strftime("%p").lower()
+                date_str = now.strftime(f"{hour}{am_pm}{minute}minutes_%d_%B_%Y")
+                
+                base_name = f"Wikipedia_{start_year}_{end_year}_{category}_{total_movies}_Movies"
+                
+                # Download buttons
+                col1, col2 = st.columns(2)
+                
+                with col1:
+                    csv = final_df.to_csv(index=False, encoding="utf-8-sig")
+                    st.download_button(
+                        "📥 Download CSV",
+                        csv,
+                        file_name=f"{base_name}.csv",
+                        mime="text/csv",
+                        use_container_width=True
+                    )
+                
+                with col2:
+                    beautiful_html = generate_beautiful_html(final_df, category, start_year, end_year, total_movies)
+                    st.download_button(
+                        "🎨 Download Beautiful HTML",
+                        beautiful_html,
+                        file_name=f"{base_name}.html",
+                        mime="text/html",
+                        use_container_width=True
+                    )
 
-category_input = st.text_input("Enter movie category (e.g., Hindi, Tamil, Bengali, Hollywood, Bollywood, Bangladeshi):", "Hindi")
-category = category_input.replace(" ", "_")
-if category:
-    category = category[0].upper() + category[1:]
-
-start_year = st.number_input("Start Year", min_value=1900, max_value=datetime.now().year, value=2020, step=1)
-end_year = st.number_input("End Year", min_value=1900, max_value=datetime.now().year, value=2023, step=1)
-
-if st.button("Fetch Movies"):
-    all_data = []
-    overall_progress = st.progress(0)
-    total_years = end_year - start_year + 1
-
-    for idx, year in enumerate(range(start_year, end_year + 1), start=1):
-        st.info(f"Fetching {category} movies for {year}...")
-        year_progress_bar = st.progress(0)
-
-        def progress_callback(p):
-            year_progress_bar.progress(min(int(p*100), 100))
-
-        url = WIKI_BASE.format(category, year)
-        df = extract_movies_generic(url, category, year, progress_callback)
-        if not df.empty:
-            all_data.append(df)
-
-        overall_progress.progress(int(idx/total_years*100))
-
-    if not all_data:
-        st.warning("No data found for the given category/years.")
-    else:
-        final_df = pd.concat(all_data, ignore_index=True)
-        total_movies = len(final_df)
-        final_df.insert(0, "S.No", range(1, total_movies + 1))
-
-        # Date-time formatting
-        now = datetime.now()
-        hour = now.strftime("%I").lstrip("0")
-        minute = now.strftime("%M")
-        am_pm = now.strftime("%p").lower()
-        date_str = now.strftime(f"{hour}{am_pm} {minute} minutes %d %B %Y")
-
-        base_name = f"({date_str}) Wikipedia {start_year}-{end_year} {category} total {total_movies} Movie List with IMDb and TMDb ID"
-
-        st.success(f"✅ Extraction completed! Total movies: {total_movies}")
-
-        # Show dataframe
-        st.dataframe(final_df)
-
-        # Provide download links
-        csv = final_df.to_csv(index=False, encoding="utf-8-sig").encode('utf-8')
-        html = final_df.to_html(index=False, escape=False).encode('utf-8')
-
-        st.download_button("Download CSV", csv, file_name=f"{base_name}.csv")
-        st.download_button("Download HTML", html, file_name=f"{base_name}.html")
+if __name__ == "__main__":
+    main()
 
