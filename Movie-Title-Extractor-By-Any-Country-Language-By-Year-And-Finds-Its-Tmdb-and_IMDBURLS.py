@@ -102,16 +102,18 @@ def get_imdb_rating(imdb_id):
         return "N/A"
 
 # ===============================================
-# Enhanced Wikipedia Scraper
+# Enhanced Wikipedia Scraper with Progress Tracking
 # ===============================================
-def extract_movies_generic(url, category, year, progress_callback=None):
-    """Enhanced movie extraction with better table parsing"""
+def extract_movies_generic(url, category, year, progress_bar, status_text, year_text):
+    """Enhanced movie extraction with better table parsing and progress tracking"""
     try:
+        status_text.text(f"🔍 Connecting to Wikipedia...")
         res = requests.get(url, headers=HEADERS, timeout=15)
         if res.status_code != 200:
             st.warning(f"❌ Wikipedia page not found for {category} {year} (HTTP {res.status_code})")
             return pd.DataFrame()
         
+        status_text.text(f"📊 Parsing Wikipedia tables...")
         soup = BeautifulSoup(res.text, "html.parser")
         
         # Remove unwanted elements
@@ -124,7 +126,20 @@ def extract_movies_generic(url, category, year, progress_callback=None):
             return pd.DataFrame()
 
         all_movies = []
-        total_rows = sum(len(pd.read_html(StringIO(str(table)))[0]) for table in tables)
+        
+        # Calculate total rows for progress tracking
+        total_rows = 0
+        for table in tables:
+            try:
+                df_temp = pd.read_html(StringIO(str(table)))[0]
+                total_rows += len(df_temp)
+            except:
+                continue
+
+        if total_rows == 0:
+            st.warning(f"⚠️ No valid movie data found for {category} {year}")
+            return pd.DataFrame()
+
         processed_rows = 0
 
         for table_idx, table in enumerate(tables):
@@ -141,7 +156,13 @@ def extract_movies_generic(url, category, year, progress_callback=None):
                     movie = clean_movie_title(row.get(name_col, ""))
                     if not movie or movie.lower() in ["title", "film", "movie", "name", "nan"]:
                         processed_rows += 1
+                        progress_percentage = processed_rows / total_rows
+                        progress_bar.progress(progress_percentage)
+                        status_text.text(f"📝 Processing {category} {year}: {processed_rows}/{total_rows} movies ({progress_percentage:.1%})")
                         continue
+
+                    # Update progress
+                    status_text.text(f"🎬 Processing: {movie}...")
 
                     # Get director from Wikipedia first
                     wiki_director = "N/A"
@@ -186,8 +207,9 @@ def extract_movies_generic(url, category, year, progress_callback=None):
                     })
 
                     processed_rows += 1
-                    if progress_callback:
-                        progress_callback(processed_rows / total_rows)
+                    progress_percentage = processed_rows / total_rows
+                    progress_bar.progress(progress_percentage)
+                    status_text.text(f"📝 Processing {category} {year}: {processed_rows}/{total_rows} movies ({progress_percentage:.1%})")
 
                     time.sleep(0.2)  # Rate limiting
 
@@ -195,6 +217,7 @@ def extract_movies_generic(url, category, year, progress_callback=None):
                 st.warning(f"⚠️ Error processing table {table_idx + 1}: {e}")
                 continue
 
+        status_text.text(f"✅ Completed {category} {year}: {len(all_movies)} movies found")
         st.success(f"✅ Extracted {len(all_movies)} movies for {category} {year}")
         return pd.DataFrame(all_movies)
         
@@ -406,7 +429,7 @@ def generate_beautiful_html(df, category, start_year, end_year, total_movies):
     return html_template
 
 # ===============================================
-# Streamlit App
+# Streamlit App with Enhanced Progress Tracking
 # ===============================================
 def main():
     st.set_page_config(
@@ -429,6 +452,12 @@ def main():
     }
     .stProgress > div > div > div > div {
         background: linear-gradient(45deg, #667eea, #764ba2);
+    }
+    .progress-container {
+        margin: 1rem 0;
+        padding: 1rem;
+        background: rgba(255,255,255,0.1);
+        border-radius: 10px;
     }
     </style>
     """, unsafe_allow_html=True)
@@ -483,28 +512,46 @@ def main():
                 return
                 
             all_data = []
-            overall_progress = st.progress(0)
-            total_years = end_year - start_year + 1
             
-            # Progress and status containers
-            status_text = st.empty()
-            year_progress_container = st.container()
+            # Overall progress tracking
+            st.subheader("📊 Overall Progress")
+            overall_progress_bar = st.progress(0)
+            overall_status = st.empty()
+            
+            total_years = end_year - start_year + 1
+            years_processed = 0
             
             for idx, year in enumerate(range(start_year, end_year + 1), start=1):
-                with year_progress_container:
-                    st.info(f"📅 Fetching {category} movies for {year}...")
-                    year_progress_bar = st.progress(0)
+                # Year-specific progress tracking
+                st.markdown(f"---")
+                st.subheader(f"🎯 Processing {category} {year}")
                 
-                def progress_callback(progress):
-                    year_progress_bar.progress(min(progress, 1.0))
+                # Create progress elements for this year
+                year_progress_bar = st.progress(0)
+                year_status = st.empty()
+                year_text = st.empty()
+                
+                # Update overall progress
+                overall_progress = years_processed / total_years
+                overall_progress_bar.progress(overall_progress)
+                overall_status.text(f"📅 Overall Progress: {years_processed}/{total_years} years ({overall_progress:.1%})")
                 
                 url = WIKI_BASE.format(category, year)
-                df = extract_movies_generic(url, category, year, progress_callback)
+                df = extract_movies_generic(url, category, year, year_progress_bar, year_status, year_text)
+                
                 if not df.empty:
                     all_data.append(df)
                 
-                overall_progress.progress(int(idx/total_years*100))
+                years_processed += 1
+                
+                # Clear year-specific progress elements
                 year_progress_bar.empty()
+                year_status.empty()
+                year_text.empty()
+            
+            # Final overall progress
+            overall_progress_bar.progress(1.0)
+            overall_status.text("✅ All years processed successfully!")
             
             if not all_data:
                 st.warning("⚠️ No data found for the given category/years.")
@@ -565,4 +612,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
