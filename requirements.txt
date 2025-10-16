@@ -1,0 +1,6 @@
+pandas
+requests
+beautifulsoup4
+imdbpy
+lxml
+tqdm
