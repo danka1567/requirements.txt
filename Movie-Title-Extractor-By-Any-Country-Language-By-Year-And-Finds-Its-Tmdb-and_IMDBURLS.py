@@ -174,17 +174,6 @@ def process_tmdb_movie(tmdb_id):
     except Exception:
         return tmdb_id, "N/A", "N/A", "N/A"
 
-def get_imdb_rating(imdb_id):
-    """Get IMDb rating for a movie"""
-    try:
-        if imdb_id and imdb_id != "N/A":
-            movie = ia.get_movie(imdb_id.replace("tt", ""))
-            if movie and 'rating' in movie:
-                return f"{movie['rating']}/10"
-        return "N/A"
-    except Exception:
-        return "N/A"
-
 # ===============================================
 # Enhanced Wikipedia Scraper with Detailed Progress Tracking
 # ===============================================
@@ -267,9 +256,6 @@ def extract_movies_generic(url, category, year, progress_bar, status_text, year_
                     
                     # Use TMDb director if available, otherwise Wikipedia director
                     final_director = tmdb_director if tmdb_director != "N/A" else wiki_director
-                    
-                    # Get IMDb rating
-                    imdb_rating = get_imdb_rating(imdb_id) if imdb_id != "N/A" else "N/A"
 
                     # Create URLs
                     tmdb_url = f"https://www.themoviedb.org/movie/{tmdb_id}" if tmdb_id != "N/A" else "N/A"
@@ -288,12 +274,9 @@ def extract_movies_generic(url, category, year, progress_bar, status_text, year_
                         "Movie": movie,
                         "Director": final_director,
                         "Release Year": year,
-                        "TMDb ID": tmdb_id,
-                        "IMDb ID": imdb_id,
-                        "IMDb Rating": imdb_rating,
-                        "Poster URL": poster_url,
                         "TMDb Link": tmdb_url,
                         "IMDb Link": imdb_url,
+                        "Poster URL": poster_url,
                         "Issue": " | ".join(reason) if reason else "None"
                     })
 
@@ -319,10 +302,10 @@ def extract_movies_generic(url, category, year, progress_bar, status_text, year_
         return pd.DataFrame()
 
 # ===============================================
-# Enhanced HTML Generator
+# Enhanced HTML Generator with Clickable Links
 # ===============================================
 def generate_beautiful_html(df, category, start_year, end_year, total_movies):
-    """Generate a beautiful HTML report with advanced styling"""
+    """Generate a beautiful HTML report with advanced styling and clickable links"""
     
     html_template = f"""
     <!DOCTYPE html>
@@ -366,6 +349,11 @@ def generate_beautiful_html(df, category, start_year, end_year, total_movies):
                 justify-content: center;
                 color: #666;
                 font-size: 14px;
+                cursor: pointer;
+                transition: transform 0.3s ease;
+            }}
+            .movie-poster:hover {{
+                transform: scale(1.05);
             }}
             .movie-poster img {{
                 width: 100%;
@@ -426,6 +414,13 @@ def generate_beautiful_html(df, category, start_year, end_year, total_movies):
                 color: #f39c12;
                 font-weight: bold;
             }}
+            .link-buttons {{
+                margin: 0.5rem 0;
+            }}
+            .btn-link {{
+                margin: 0.2rem;
+                font-size: 0.8rem;
+            }}
         </style>
     </head>
     <body>
@@ -447,11 +442,11 @@ def generate_beautiful_html(df, category, start_year, end_year, total_movies):
                         <p class="text-muted">Total Movies</p>
                     </div>
                     <div class="col-md-3">
-                        <h3 class="fw-bold text-success">{len(df[df['TMDb ID'] != 'N/A'])}</h3>
+                        <h3 class="fw-bold text-success">{len(df[df['TMDb Link'] != 'N/A'])}</h3>
                         <p class="text-muted">TMDb Found</p>
                     </div>
                     <div class="col-md-3">
-                        <h3 class="fw-bold text-info">{len(df[df['IMDb ID'] != 'N/A'])}</h3>
+                        <h3 class="fw-bold text-info">{len(df[df['IMDb Link'] != 'N/A'])}</h3>
                         <p class="text-muted">IMDb Found</p>
                     </div>
                     <div class="col-md-3">
@@ -467,13 +462,19 @@ def generate_beautiful_html(df, category, start_year, end_year, total_movies):
 
     # Add movie cards
     for idx, movie in df.iterrows():
-        poster_html = f'<img src="{movie["Poster URL"]}" alt="{movie["Movie"]}" loading="lazy">' if movie["Poster URL"] != "N/A" else '<div class="d-flex align-items-center justify-content-center h-100"><i class="fas fa-film fa-3x text-muted"></i></div>'
+        # Create clickable poster
+        if movie["Poster URL"] != "N/A":
+            poster_html = f'<a href="{movie["Poster URL"]}" target="_blank" style="display: block; width: 100%; height: 100%;"><img src="{movie["Poster URL"]}" alt="{movie["Movie"]}" loading="lazy" style="width: 100%; height: 100%; object-fit: cover;"></a>'
+        else:
+            poster_html = '<div class="d-flex align-items-center justify-content-center h-100"><i class="fas fa-film fa-3x text-muted"></i></div>'
         
-        tmdb_button = f'<a href="{movie["TMDb Link"]}" class="btn btn-sm btn-outline-primary me-2" target="_blank"><i class="fas fa-database"></i> TMDb</a>' if movie["TMDb Link"] != "N/A" else '<button class="btn btn-sm btn-outline-secondary me-2" disabled><i class="fas fa-database"></i> TMDb</button>'
+        # Create TMDb and IMDb buttons
+        tmdb_button = f'<a href="{movie["TMDb Link"]}" class="btn btn-sm btn-outline-primary btn-link" target="_blank"><i class="fas fa-database"></i> TMDb</a>' if movie["TMDb Link"] != "N/A" else '<button class="btn btn-sm btn-outline-secondary btn-link" disabled><i class="fas fa-database"></i> TMDb</button>'
         
-        imdb_button = f'<a href="{movie["IMDb Link"]}" class="btn btn-sm btn-warning me-2" target="_blank"><i class="fab fa-imdb"></i> IMDb</a>' if movie["IMDb Link"] != "N/A" else '<button class="btn btn-sm btn-outline-secondary me-2" disabled><i class="fab fa-imdb"></i> IMDb</button>'
+        imdb_button = f'<a href="{movie["IMDb Link"]}" class="btn btn-sm btn-warning btn-link" target="_blank"><i class="fab fa-imdb"></i> IMDb</a>' if movie["IMDb Link"] != "N/A" else '<button class="btn btn-sm btn-outline-secondary btn-link" disabled><i class="fab fa-imdb"></i> IMDb</button>'
         
-        rating_html = f'<span class="rating"><i class="fas fa-star"></i> {movie["IMDb Rating"]}</span>' if movie["IMDb Rating"] != "N/A" else '<span class="text-muted">No Rating</span>'
+        # Create poster button if available
+        poster_button = f'<a href="{movie["Poster URL"]}" class="btn btn-sm btn-info btn-link" target="_blank"><i class="fas fa-image"></i> Poster</a>' if movie["Poster URL"] != "N/A" else '<button class="btn btn-sm btn-outline-secondary btn-link" disabled><i class="fas fa-image"></i> No Poster</button>'
         
         issue_badge = f'<span class="issue-badge">{movie["Issue"]}</span>' if movie["Issue"] != "None" else '<span class="badge bg-success">Complete</span>'
 
@@ -486,18 +487,17 @@ def generate_beautiful_html(df, category, start_year, end_year, total_movies):
                         <div class="movie-info">
                             <div class="movie-title">{movie["Movie"]}</div>
                             <div class="movie-meta">
-                                <i class="fas fa-calendar-alt me-1"></i>{movie["Release Year"]} 
-                                <span class="mx-2">•</span>
-                                {rating_html}
+                                <i class="fas fa-calendar-alt me-1"></i>{movie["Release Year"]}
                             </div>
                             <div class="movie-meta">
                                 <i class="fas fa-user-tie me-1"></i>{movie["Director"]}
                             </div>
+                            <div class="link-buttons">
+                                {tmdb_button}
+                                {imdb_button}
+                                {poster_button}
+                            </div>
                             <div class="d-flex justify-content-between align-items-center mt-3">
-                                <div class="btn-group">
-                                    {tmdb_button}
-                                    {imdb_button}
-                                </div>
                                 {issue_badge}
                             </div>
                         </div>
@@ -520,6 +520,13 @@ def generate_beautiful_html(df, category, start_year, end_year, total_movies):
     """
     
     return html_template
+
+# ===============================================
+# Function to display HTML in Streamlit
+# ===============================================
+def display_html_in_streamlit(html_content):
+    """Display HTML content in Streamlit with proper rendering"""
+    st.components.v1.html(html_content, height=800, scrolling=True)
 
 # ===============================================
 # Streamlit App with Enhanced Progress Tracking & Sound
@@ -722,15 +729,20 @@ def main():
                 with col1:
                     st.metric("Total Movies", total_movies)
                 with col2:
-                    st.metric("TMDb Found", len(final_df[final_df['TMDb ID'] != 'N/A']))
+                    st.metric("TMDb Found", len(final_df[final_df['TMDb Link'] != 'N/A']))
                 with col3:
-                    st.metric("IMDb Found", len(final_df[final_df['IMDb ID'] != 'N/A']))
+                    st.metric("IMDb Found", len(final_df[final_df['IMDb Link'] != 'N/A']))
                 with col4:
                     st.metric("Complete Records", len(final_df[final_df['Issue'] == 'None']))
                 
                 # Show dataframe with expander
                 with st.expander("📊 View Data Table", expanded=True):
                     st.dataframe(final_df, use_container_width=True)
+                
+                # Generate and display HTML preview
+                st.subheader("🎨 HTML Preview")
+                beautiful_html = generate_beautiful_html(final_df, category, start_year, end_year, total_movies)
+                display_html_in_streamlit(beautiful_html)
                 
                 # Date-time formatting for filename
                 now = datetime.now()
@@ -755,7 +767,6 @@ def main():
                     )
                 
                 with col2:
-                    beautiful_html = generate_beautiful_html(final_df, category, start_year, end_year, total_movies)
                     st.download_button(
                         "🎨 Download Beautiful HTML",
                         beautiful_html,
