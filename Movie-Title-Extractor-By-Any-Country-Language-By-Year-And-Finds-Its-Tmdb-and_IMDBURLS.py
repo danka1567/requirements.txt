@@ -9,6 +9,7 @@ from imdb import IMDb
 import logging
 import streamlit as st
 import re
+import base64
 from urllib.parse import quote
 
 # ===============================================
@@ -21,6 +22,127 @@ WIKI_BASE = "https://en.wikipedia.org/wiki/List_of_{}_films_of_{}"
 
 logging.getLogger("imdbpy").setLevel(logging.ERROR)
 ia = IMDb()
+
+# ===============================================
+# Sound Functions
+# ===============================================
+def autoplay_audio(file_path: str):
+    """Auto-play audio file when task completes"""
+    try:
+        with open(file_path, "rb") as f:
+            data = f.read()
+            b64 = base64.b64encode(data).decode()
+            md = f"""
+                <audio autoplay>
+                <source src="data:audio/mp3;base64,{b64}" type="audio/mp3">
+                </audio>
+                """
+            st.markdown(md, unsafe_allow_html=True)
+    except Exception as e:
+        st.warning(f"Could not play completion sound: {e}")
+
+def play_completion_sound():
+    """Play completion sound using multiple methods"""
+    
+    # Method 1: Use embedded base64 sound (works without external files)
+    completion_sound_base64 = """
+    <script>
+    function playCompletionSound() {
+        const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+        const oscillator = audioContext.createOscillator();
+        const gainNode = audioContext.createGain();
+        
+        oscillator.connect(gainNode);
+        gainNode.connect(audioContext.destination);
+        
+        oscillator.type = 'sine';
+        oscillator.frequency.value = 800;
+        gainNode.gain.value = 0.1;
+        
+        oscillator.start();
+        
+        // Create a pleasant completion sound
+        setTimeout(() => {
+            oscillator.frequency.value = 1000;
+        }, 100);
+        
+        setTimeout(() => {
+            oscillator.frequency.value = 1200;
+        }, 200);
+        
+        setTimeout(() => {
+            gainNode.gain.exponentialRampToValueAtTime(0.001, audioContext.currentTime + 0.5);
+            oscillator.stop(audioContext.currentTime + 0.5);
+        }, 300);
+    }
+    
+    // Play sound when page loads
+    window.addEventListener('load', playCompletionSound);
+    </script>
+    """
+    st.components.v1.html(completion_sound_base64, height=0)
+
+def play_simple_beep():
+    """Play a simple beep sound using JavaScript"""
+    beep_js = """
+    <script>
+    function beep() {
+        var context = new (window.AudioContext || window.webkitAudioContext)();
+        var oscillator = context.createOscillator();
+        var gainNode = context.createGain();
+        
+        oscillator.connect(gainNode);
+        gainNode.connect(context.destination);
+        
+        oscillator.type = 'sine';
+        oscillator.frequency.value = 800;
+        gainNode.gain.value = 0.1;
+        
+        oscillator.start();
+        gainNode.gain.exponentialRampToValueAtTime(0.001, context.currentTime + 0.5);
+        oscillator.stop(context.currentTime + 0.5);
+    }
+    beep();
+    </script>
+    """
+    st.components.v1.html(beep_js, height=0)
+
+def play_success_sound():
+    """Play a more elaborate success sound"""
+    success_js = """
+    <script>
+    function playSuccessSound() {
+        const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+        
+        // Play a chord (C major)
+        const frequencies = [523.25, 659.25, 783.99]; // C, E, G
+        const oscillators = [];
+        const gainNodes = [];
+        
+        frequencies.forEach((freq, index) => {
+            const oscillator = audioContext.createOscillator();
+            const gainNode = audioContext.createGain();
+            
+            oscillator.connect(gainNode);
+            gainNode.connect(audioContext.destination);
+            
+            oscillator.type = 'sine';
+            oscillator.frequency.value = freq;
+            gainNode.gain.value = 0.05;
+            
+            // Stagger the start times slightly
+            oscillator.start(audioContext.currentTime + (index * 0.1));
+            gainNode.gain.exponentialRampToValueAtTime(0.001, audioContext.currentTime + 1 + (index * 0.1));
+            oscillator.stop(audioContext.currentTime + 1 + (index * 0.1));
+            
+            oscillators.push(oscillator);
+            gainNodes.push(gainNode);
+        });
+    }
+    playSuccessSound();
+    </script>
+    """
+    st.components.v1.html(success_js, height=0)
 
 # ===============================================
 # Enhanced TMDb & IMDb Functions
@@ -429,7 +551,7 @@ def generate_beautiful_html(df, category, start_year, end_year, total_movies):
     return html_template
 
 # ===============================================
-# Streamlit App with Enhanced Progress Tracking
+# Streamlit App with Enhanced Progress Tracking & Sound
 # ===============================================
 def main():
     st.set_page_config(
@@ -459,12 +581,20 @@ def main():
         background: rgba(255,255,255,0.1);
         border-radius: 10px;
     }
+    .completion-animation {
+        text-align: center;
+        padding: 2rem;
+        background: linear-gradient(45deg, #00b09b, #96c93d);
+        border-radius: 15px;
+        color: white;
+        margin: 1rem 0;
+    }
     </style>
     """, unsafe_allow_html=True)
     
     st.markdown('<h1 class="main-header">🎬 Advanced Movie Data Extractor</h1>', unsafe_allow_html=True)
     
-    # Sidebar
+    # Sidebar with sound options
     with st.sidebar:
         st.header("⚙️ Configuration")
         st.markdown("---")
@@ -495,12 +625,21 @@ def main():
             )
         
         st.markdown("---")
+        st.header("🔊 Sound Settings")
+        sound_option = st.selectbox(
+            "Completion Sound",
+            ["None", "Simple Beep", "Success Chord", "Custom Sound"],
+            help="Choose the sound to play when extraction completes"
+        )
+        
+        st.markdown("---")
         st.info("""
         **Instructions:**
         1. Enter movie category
         2. Select year range
-        3. Click 'Fetch Movies'
-        4. Download results
+        3. Choose completion sound
+        4. Click 'Fetch Movies'
+        5. Download results
         """)
     
     # Main content
@@ -559,6 +698,22 @@ def main():
                 final_df = pd.concat(all_data, ignore_index=True)
                 total_movies = len(final_df)
                 final_df.insert(0, "S.No", range(1, total_movies + 1))
+                
+                # Display completion animation and play sound
+                st.markdown("""
+                <div class="completion-animation">
+                    <h2>🎉 Extraction Complete!</h2>
+                    <p>Your movie data has been successfully processed</p>
+                </div>
+                """, unsafe_allow_html=True)
+                
+                # Play completion sound based on user selection
+                if sound_option == "Simple Beep":
+                    play_simple_beep()
+                elif sound_option == "Success Chord":
+                    play_success_sound()
+                elif sound_option == "Custom Sound":
+                    play_completion_sound()
                 
                 # Display results
                 st.success(f"✅ Extraction completed! Total movies: {total_movies}")
