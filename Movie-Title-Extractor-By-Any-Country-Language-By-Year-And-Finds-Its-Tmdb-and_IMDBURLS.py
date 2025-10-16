@@ -26,123 +26,85 @@ ia = IMDb()
 # ===============================================
 # Sound Functions
 # ===============================================
-def autoplay_audio(file_path: str):
-    """Auto-play audio file when task completes"""
-    try:
-        with open(file_path, "rb") as f:
-            data = f.read()
-            b64 = base64.b64encode(data).decode()
-            md = f"""
-                <audio autoplay>
-                <source src="data:audio/mp3;base64,{b64}" type="audio/mp3">
-                </audio>
-                """
-            st.markdown(md, unsafe_allow_html=True)
-    except Exception as e:
-        st.warning(f"Could not play completion sound: {e}")
-
-def play_completion_sound():
-    """Play completion sound using multiple methods"""
-    
-    # Method 1: Use embedded base64 sound (works without external files)
-    completion_sound_base64 = """
+def play_extended_completion_sound():
+    """Play a 6-second completion sound with multiple effects"""
+    extended_sound_js = """
     <script>
-    function playCompletionSound() {
+    function playExtendedCompletionSound() {
         const audioContext = new (window.AudioContext || window.webkitAudioContext)();
-        const oscillator = audioContext.createOscillator();
-        const gainNode = audioContext.createGain();
         
-        oscillator.connect(gainNode);
-        gainNode.connect(audioContext.destination);
+        // Main success melody (plays for 6 seconds)
+        const mainOscillator = audioContext.createOscillator();
+        const mainGain = audioContext.createGain();
         
-        oscillator.type = 'sine';
-        oscillator.frequency.value = 800;
-        gainNode.gain.value = 0.1;
+        mainOscillator.connect(mainGain);
+        mainGain.connect(audioContext.destination);
         
-        oscillator.start();
+        mainOscillator.type = 'sine';
+        mainGain.gain.value = 0.1;
         
-        // Create a pleasant completion sound
-        setTimeout(() => {
-            oscillator.frequency.value = 1000;
-        }, 100);
+        // Play a victory melody sequence
+        const melody = [
+            {freq: 523.25, time: 0},   // C
+            {freq: 659.25, time: 0.5}, // E
+            {freq: 783.99, time: 1.0}, // G
+            {freq: 1046.50, time: 1.5}, // C (high)
+            {freq: 880.00, time: 2.0}, // A
+            {freq: 783.99, time: 2.5}, // G
+            {freq: 659.25, time: 3.0}, // E
+            {freq: 523.25, time: 3.5}, // C
+            {freq: 659.25, time: 4.0}, // E
+            {freq: 783.99, time: 4.5}, // G
+            {freq: 1046.50, time: 5.0}, // C (high)
+            {freq: 1046.50, time: 5.5}  // C (high sustained)
+        ];
         
-        setTimeout(() => {
-            oscillator.frequency.value = 1200;
-        }, 200);
+        mainOscillator.start();
         
-        setTimeout(() => {
-            gainNode.gain.exponentialRampToValueAtTime(0.001, audioContext.currentTime + 0.5);
-            oscillator.stop(audioContext.currentTime + 0.5);
-        }, 300);
+        melody.forEach(note => {
+            mainOscillator.frequency.setValueAtTime(note.freq, audioContext.currentTime + note.time);
+        });
+        
+        // Fade out
+        mainGain.gain.setValueAtTime(0.1, audioContext.currentTime + 5.8);
+        mainGain.gain.exponentialRampToValueAtTime(0.001, audioContext.currentTime + 6.0);
+        mainOscillator.stop(audioContext.currentTime + 6.0);
+        
+        // Add some background harmony
+        const harmonyOscillator = audioContext.createOscillator();
+        const harmonyGain = audioContext.createGain();
+        
+        harmonyOscillator.connect(harmonyGain);
+        harmonyGain.connect(audioContext.destination);
+        
+        harmonyOscillator.type = 'triangle';
+        harmonyGain.gain.value = 0.05;
+        
+        const harmonyNotes = [
+            {freq: 392.00, time: 0},    // G
+            {freq: 493.88, time: 1.5},  // B
+            {freq: 392.00, time: 3.0},  // G
+            {freq: 329.63, time: 4.5}   // E
+        ];
+        
+        harmonyOscillator.start();
+        
+        harmonyNotes.forEach(note => {
+            harmonyOscillator.frequency.setValueAtTime(note.freq, audioContext.currentTime + note.time);
+        });
+        
+        harmonyGain.gain.setValueAtTime(0.05, audioContext.currentTime + 5.8);
+        harmonyGain.gain.exponentialRampToValueAtTime(0.001, audioContext.currentTime + 6.0);
+        harmonyOscillator.stop(audioContext.currentTime + 6.0);
     }
-    
-    // Play sound when page loads
-    window.addEventListener('load', playCompletionSound);
+    playExtendedCompletionSound();
     </script>
     """
-    st.components.v1.html(completion_sound_base64, height=0)
-
-def play_simple_beep():
-    """Play a simple beep sound using JavaScript"""
-    beep_js = """
-    <script>
-    function beep() {
-        var context = new (window.AudioContext || window.webkitAudioContext)();
-        var oscillator = context.createOscillator();
-        var gainNode = context.createGain();
-        
-        oscillator.connect(gainNode);
-        gainNode.connect(context.destination);
-        
-        oscillator.type = 'sine';
-        oscillator.frequency.value = 800;
-        gainNode.gain.value = 0.1;
-        
-        oscillator.start();
-        gainNode.gain.exponentialRampToValueAtTime(0.001, context.currentTime + 0.5);
-        oscillator.stop(context.currentTime + 0.5);
-    }
-    beep();
-    </script>
-    """
-    st.components.v1.html(beep_js, height=0)
+    st.components.v1.html(extended_sound_js, height=0)
 
 def play_success_sound():
-    """Play a more elaborate success sound"""
-    success_js = """
-    <script>
-    function playSuccessSound() {
-        const audioContext = new (window.AudioContext || window.webkitAudioContext)();
-        
-        // Play a chord (C major)
-        const frequencies = [523.25, 659.25, 783.99]; // C, E, G
-        const oscillators = [];
-        const gainNodes = [];
-        
-        frequencies.forEach((freq, index) => {
-            const oscillator = audioContext.createOscillator();
-            const gainNode = audioContext.createGain();
-            
-            oscillator.connect(gainNode);
-            gainNode.connect(audioContext.destination);
-            
-            oscillator.type = 'sine';
-            oscillator.frequency.value = freq;
-            gainNode.gain.value = 0.05;
-            
-            // Stagger the start times slightly
-            oscillator.start(audioContext.currentTime + (index * 0.1));
-            gainNode.gain.exponentialRampToValueAtTime(0.001, audioContext.currentTime + 1 + (index * 0.1));
-            oscillator.stop(audioContext.currentTime + 1 + (index * 0.1));
-            
-            oscillators.push(oscillator);
-            gainNodes.push(gainNode);
-        });
-    }
-    playSuccessSound();
-    </script>
-    """
-    st.components.v1.html(success_js, height=0)
+    """Play success sound - default selection"""
+    play_extended_completion_sound()
 
 # ===============================================
 # Enhanced TMDb & IMDb Functions
@@ -224,18 +186,18 @@ def get_imdb_rating(imdb_id):
         return "N/A"
 
 # ===============================================
-# Enhanced Wikipedia Scraper with Progress Tracking
+# Enhanced Wikipedia Scraper with Detailed Progress Tracking
 # ===============================================
-def extract_movies_generic(url, category, year, progress_bar, status_text, year_text):
-    """Enhanced movie extraction with better table parsing and progress tracking"""
+def extract_movies_generic(url, category, year, progress_bar, status_text, year_text, total_movies_text):
+    """Enhanced movie extraction with detailed progress tracking"""
     try:
-        status_text.text(f"🔍 Connecting to Wikipedia...")
+        status_text.text(f"🔍 Connecting to Wikipedia for {category} {year}...")
         res = requests.get(url, headers=HEADERS, timeout=15)
         if res.status_code != 200:
             st.warning(f"❌ Wikipedia page not found for {category} {year} (HTTP {res.status_code})")
             return pd.DataFrame()
         
-        status_text.text(f"📊 Parsing Wikipedia tables...")
+        status_text.text(f"📊 Parsing Wikipedia tables for {category} {year}...")
         soup = BeautifulSoup(res.text, "html.parser")
         
         # Remove unwanted elements
@@ -263,6 +225,7 @@ def extract_movies_generic(url, category, year, progress_bar, status_text, year_
             return pd.DataFrame()
 
         processed_rows = 0
+        valid_movies_count = 0
 
         for table_idx, table in enumerate(tables):
             try:
@@ -278,13 +241,19 @@ def extract_movies_generic(url, category, year, progress_bar, status_text, year_
                     movie = clean_movie_title(row.get(name_col, ""))
                     if not movie or movie.lower() in ["title", "film", "movie", "name", "nan"]:
                         processed_rows += 1
-                        progress_percentage = processed_rows / total_rows
-                        progress_bar.progress(progress_percentage)
-                        status_text.text(f"📝 Processing {category} {year}: {processed_rows}/{total_rows} movies ({progress_percentage:.1%})")
+                        progress_percentage = (processed_rows / total_rows) * 100
+                        progress_bar.progress(progress_percentage / 100)
+                        status_text.text(f"⏳ Processing: {processed_rows}/{total_rows} rows")
+                        total_movies_text.text(f"🎬 Valid movies found: {valid_movies_count}")
                         continue
 
-                    # Update progress
-                    status_text.text(f"🎬 Processing: {movie}...")
+                    # Update progress with movie-specific info
+                    current_progress = processed_rows + 1
+                    progress_percentage = (current_progress / total_rows) * 100
+                    
+                    status_text.text(f"🎬 Processing: {movie}")
+                    total_movies_text.text(f"📊 Progress: {processed_rows + 1}/{total_rows} ({progress_percentage:.1f}%)")
+                    progress_bar.progress(progress_percentage / 100)
 
                     # Get director from Wikipedia first
                     wiki_director = "N/A"
@@ -328,10 +297,8 @@ def extract_movies_generic(url, category, year, progress_bar, status_text, year_
                         "Issue": " | ".join(reason) if reason else "None"
                     })
 
+                    valid_movies_count += 1
                     processed_rows += 1
-                    progress_percentage = processed_rows / total_rows
-                    progress_bar.progress(progress_percentage)
-                    status_text.text(f"📝 Processing {category} {year}: {processed_rows}/{total_rows} movies ({progress_percentage:.1%})")
 
                     time.sleep(0.2)  # Rate limiting
 
@@ -339,8 +306,12 @@ def extract_movies_generic(url, category, year, progress_bar, status_text, year_
                 st.warning(f"⚠️ Error processing table {table_idx + 1}: {e}")
                 continue
 
-        status_text.text(f"✅ Completed {category} {year}: {len(all_movies)} movies found")
-        st.success(f"✅ Extracted {len(all_movies)} movies for {category} {year}")
+        # Final update for this year
+        progress_bar.progress(1.0)
+        status_text.text(f"✅ Completed {category} {year}")
+        total_movies_text.text(f"🎉 Extraction complete: {valid_movies_count} movies found")
+        
+        st.success(f"✅ Extracted {valid_movies_count} movies for {category} {year}")
         return pd.DataFrame(all_movies)
         
     except Exception as e:
@@ -588,6 +559,22 @@ def main():
         border-radius: 15px;
         color: white;
         margin: 1rem 0;
+        animation: pulse 2s infinite;
+    }
+    @keyframes pulse {
+        0% { transform: scale(1); }
+        50% { transform: scale(1.02); }
+        100% { transform: scale(1); }
+    }
+    .progress-info {
+        font-family: 'Courier New', monospace;
+        font-size: 1.1rem;
+        font-weight: bold;
+        color: #333;
+        background: rgba(255,255,255,0.9);
+        padding: 0.5rem 1rem;
+        border-radius: 10px;
+        margin: 0.5rem 0;
     }
     </style>
     """, unsafe_allow_html=True)
@@ -626,9 +613,11 @@ def main():
         
         st.markdown("---")
         st.header("🔊 Sound Settings")
+        # Default selection is Success Sound
         sound_option = st.selectbox(
             "Completion Sound",
-            ["None", "Simple Beep", "Success Chord", "Custom Sound"],
+            ["Success Sound", "Simple Beep", "None"],
+            index=0,  # Default to Success Sound
             help="Choose the sound to play when extraction completes"
         )
         
@@ -637,9 +626,14 @@ def main():
         **Instructions:**
         1. Enter movie category
         2. Select year range
-        3. Choose completion sound
-        4. Click 'Fetch Movies'
-        5. Download results
+        3. Click 'Fetch Movies'
+        4. Download results
+        
+        **Progress Display:**
+        - Shows current/total rows
+        - Percentage completion
+        - Real-time updates
+        - 6-second completion sound
         """)
     
     # Main content
@@ -656,6 +650,7 @@ def main():
             st.subheader("📊 Overall Progress")
             overall_progress_bar = st.progress(0)
             overall_status = st.empty()
+            overall_count = st.empty()
             
             total_years = end_year - start_year + 1
             years_processed = 0
@@ -668,15 +663,16 @@ def main():
                 # Create progress elements for this year
                 year_progress_bar = st.progress(0)
                 year_status = st.empty()
-                year_text = st.empty()
+                year_count = st.empty()
                 
                 # Update overall progress
                 overall_progress = years_processed / total_years
                 overall_progress_bar.progress(overall_progress)
-                overall_status.text(f"📅 Overall Progress: {years_processed}/{total_years} years ({overall_progress:.1%})")
+                overall_status.text(f"📅 Processing year {year} of {end_year}")
+                overall_count.markdown(f'<div class="progress-info">Overall: {years_processed}/{total_years} years ({(overall_progress * 100):.1f}%)</div>', unsafe_allow_html=True)
                 
                 url = WIKI_BASE.format(category, year)
-                df = extract_movies_generic(url, category, year, year_progress_bar, year_status, year_text)
+                df = extract_movies_generic(url, category, year, year_progress_bar, year_status, year_count, st.empty())
                 
                 if not df.empty:
                     all_data.append(df)
@@ -686,11 +682,12 @@ def main():
                 # Clear year-specific progress elements
                 year_progress_bar.empty()
                 year_status.empty()
-                year_text.empty()
+                year_count.empty()
             
             # Final overall progress
             overall_progress_bar.progress(1.0)
             overall_status.text("✅ All years processed successfully!")
+            overall_count.markdown(f'<div class="progress-info">🎉 Complete: {total_years}/{total_years} years (100%)</div>', unsafe_allow_html=True)
             
             if not all_data:
                 st.warning("⚠️ No data found for the given category/years.")
@@ -704,16 +701,18 @@ def main():
                 <div class="completion-animation">
                     <h2>🎉 Extraction Complete!</h2>
                     <p>Your movie data has been successfully processed</p>
+                    <p><i class="fas fa-music"></i> Playing completion sound...</p>
                 </div>
                 """, unsafe_allow_html=True)
                 
                 # Play completion sound based on user selection
-                if sound_option == "Simple Beep":
-                    play_simple_beep()
-                elif sound_option == "Success Chord":
+                if sound_option == "Success Sound":
                     play_success_sound()
-                elif sound_option == "Custom Sound":
-                    play_completion_sound()
+                elif sound_option == "Simple Beep":
+                    play_extended_completion_sound()  # Still use extended sound for consistency
+                
+                # Add a small delay to ensure sound plays
+                time.sleep(0.5)
                 
                 # Display results
                 st.success(f"✅ Extraction completed! Total movies: {total_movies}")
